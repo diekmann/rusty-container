@@ -2,21 +2,55 @@ extern crate libc;
 
 use std::ptr;
 use libc::{c_void, size_t, c_int};
-use libc::{PROT_READ, PROT_WRITE};
+use libc::{PROT_READ, PROT_WRITE, PROT_NONE};
 use libc::{MAP_PRIVATE, MAP_ANONYMOUS, MAP_GROWSDOWN, MAP_STACK};
 use libc::{CLONE_NEWUSER, CLONE_NEWNS, CLONE_NEWPID, SIGCHLD};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 
-fn mmap_stack(stack_size: size_t) -> *mut c_void {
-    unsafe {
-        let p = libc::mmap(ptr::null_mut(), stack_size, PROT_READ | PROT_WRITE,
-                           MAP_PRIVATE | MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_STACK, -1, 0);
-        assert!(p != libc::MAP_FAILED);
-        //TODO add guard pages
-        p
-    }
 
+struct Stack {
+    p: *mut c_void,
+    len: usize,
+    pub top: *mut c_void,
+}
+
+impl Stack {
+    fn new(stack_size: size_t) -> Self {
+        //TODO what if stack size is not a mupltiple of pagesize?
+        let pagesize = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) };
+        assert!(pagesize > 1);
+        let pagesize = pagesize as usize;
+        println!("Pagesize is {}k", pagesize / 1024);
+        let len = stack_size + 2*pagesize; // guard pages
+
+        let p = unsafe {
+            let p = libc::mmap(ptr::null_mut(),
+                               len,
+                               PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_STACK, -1, 0);
+            assert!(p != libc::MAP_FAILED);
+            assert_eq!(p as usize % pagesize, 0); // aligned to page boundary
+            p
+        };
+
+        // guard pages
+        assert_eq!(unsafe { libc::mprotect(p, pagesize, PROT_NONE) }, 0);
+        let start_of_end = p as usize + pagesize + (stack_size / pagesize)*pagesize;
+        assert_eq!(unsafe { libc::mprotect(start_of_end as *mut c_void, pagesize, PROT_NONE) }, 0);
+
+        // stack grows down
+        let stack_top = p as usize + pagesize + stack_size;
+
+        Stack{ p:p, len:len, top:stack_top as *mut c_void }
+    }
+}
+
+impl Drop for Stack {
+    fn drop(&mut self) {
+        println!("munmap stack");
+        assert_eq!(unsafe { libc::munmap(self.p, self.len) }, 0);
+    }
 }
 
 
@@ -24,6 +58,7 @@ fn mmap_stack(stack_size: size_t) -> *mut c_void {
 
 
 use std::thread;
+
 
 extern "C" fn child_func(args: *mut c_void) -> c_int {
     println!("I'm called from child_func");
@@ -87,14 +122,12 @@ fn main() {
         Box::into_raw(child_args) as *mut c_void
     };
 
-    let stack_size = 4 * 1024 * 1024;
-    let child_stack = mmap_stack(stack_size);
 
-    // stack grows down
-    let child_stack_top = unsafe { child_stack.offset(stack_size as isize) };
+    let stack_size = 4*1024*1024;
+    let child_stack = Stack::new(stack_size);
 
     let child_pid = unsafe {
-        libc::clone(child_func, child_stack_top, CLONE_NEWUSER|CLONE_NEWNS|CLONE_NEWPID|SIGCHLD, ptr_child_args)
+        libc::clone(child_func, child_stack.top, CLONE_NEWUSER|CLONE_NEWNS|CLONE_NEWPID|SIGCHLD, ptr_child_args)
     };
     assert!(child_pid != -1);
 
@@ -119,5 +152,5 @@ fn main() {
         drop(Box::from_raw(ptr_child_args));
     }
 
-    //TODO munmap child_stack
+    //child_stack gets unmapped
 }
