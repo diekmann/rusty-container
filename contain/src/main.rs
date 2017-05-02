@@ -16,12 +16,14 @@ struct Stack {
 }
 
 impl Stack {
-    fn new(stack_size: size_t) -> Self {
-        //TODO what if stack size is not a mupltiple of pagesize?
+    // stack size in pages
+    fn new(stack_size: usize) -> Self {
         let pagesize = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) };
         assert!(pagesize > 1);
         let pagesize = pagesize as usize;
-        println!("Pagesize is {}k", pagesize / 1024);
+
+        let stack_size = stack_size * pagesize;
+        println!("Pagesize is {}k, allocating stack of size {}k", pagesize/1024, stack_size/1024);
         let len = stack_size + 2*pagesize; // guard pages
 
         let p = unsafe {
@@ -41,6 +43,7 @@ impl Stack {
 
         // stack grows down
         let stack_top = p as usize + pagesize + stack_size;
+        assert_eq!(stack_top % pagesize, 0);
 
         Stack{ p:p, len:len, top:stack_top as *mut c_void }
     }
@@ -123,9 +126,9 @@ fn main() {
     };
 
 
-    let stack_size = 4*1024*1024;
-    let child_stack = Stack::new(stack_size);
+    let child_stack = Stack::new(512);
 
+    println!("cloning");
     let child_pid = unsafe {
         libc::clone(child_func, child_stack.top, CLONE_NEWUSER|CLONE_NEWNS|CLONE_NEWPID|SIGCHLD, ptr_child_args)
     };
