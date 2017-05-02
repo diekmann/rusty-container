@@ -3,7 +3,9 @@ extern crate contain;
 
 use libc::{c_void, c_int};
 use libc::{CLONE_NEWUSER, CLONE_NEWNS, CLONE_NEWPID, SIGCHLD};
+use std::fs;
 use std::fs::{File, OpenOptions};
+use std::path::Path;
 use std::io::{Read, Write};
 use std::thread;
 use contain::Stack;
@@ -27,7 +29,7 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
         assert_eq!(unsafe { libc::close(w_pipe_fd) } , 0);
         unsafe {
             let mut buf = 0u8;
-            libc::read(r_pipe_fd, (&mut buf) as *mut u8 as *mut c_void, 1);
+            assert_eq!(libc::read(r_pipe_fd, (&mut buf) as *mut u8 as *mut c_void, 1), 0);
         }
 
         {
@@ -40,6 +42,14 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
                     println!("{}", l);
                 }
             }
+        }
+
+        let container_root = Path::new("./mntcont");
+        if container_root.exists() {
+            assert!(container_root.is_dir());
+        } else {
+            println!("creating {:?} at {}", container_root.file_name().expect("root name"), container_root.to_string_lossy());
+            fs::create_dir(container_root).expect("mkdir mntcont");
         }
 
         panic!("Oops!");
