@@ -1,19 +1,46 @@
 extern crate libc;
 extern crate contain;
 
-use libc::{c_void, c_int};
+use libc::{c_void, c_int, c_ulong, c_char};
+use std::ptr;
+use libc::{MS_REC, MS_PRIVATE, MS_NOSUID, MS_NODEV, MS_NOEXEC};
 use libc::{CLONE_NEWUSER, CLONE_NEWNS, CLONE_NEWPID, SIGCHLD};
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 use std::io::{Read, Write};
 use std::thread;
+use std::ffi::{CString, CStr};
+use std::os::unix::ffi::OsStrExt;
 use contain::Stack;
 
 
+//path to cstr
+fn p2cstr<P: AsRef<Path>>(po: Option<P>) -> Option<CString> {
+    po.map( |p|
+        //http://stackoverflow.com/questions/38948669/whats-the-most-direct-way-to-convert-a-path-to-a-c-char
+        // TODO possible without copying?
+        CString::new(p.as_ref().as_os_str().as_bytes()).expect("string contains NULLs")
+    )
+}
+
+// CString Option to pointer
+fn cstr2p(o: Option<CString>) -> *const c_char {
+    o.map_or(ptr::null(), |x| x.as_ptr())
+}
+
+fn domount<P: AsRef<Path>>(source: Option<P>, target: Option<P>, filesystemtype: Option<&str>, mountflags: c_ulong) -> () {
+    let source = p2cstr(source.as_ref());
+    let target = p2cstr(target.as_ref());
+    let fstype = match filesystemtype {
+            None => ptr::null(),
+            Some(fst) => CString::new(fst).expect("fstypes has NULLs").as_ptr(),
+        };
+    let r = unsafe { libc::mount(cstr2p(source), cstr2p(target), fstype, mountflags, ptr::null()) };
+    assert_eq!(r, 0);
+}
+
 // a lot copied from man USER_NAMESPACES(7)
-
-
 extern "C" fn child_func(args: *mut c_void) -> c_int {
     println!("I'm called from child_func");
 
@@ -48,10 +75,30 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
         if container_root.exists() {
             assert!(container_root.is_dir());
         } else {
-            println!("creating {:?} at {}", container_root.file_name().expect("root name"), container_root.to_string_lossy());
+            println!("creating {:?}", container_root.as_os_str());
             fs::create_dir(container_root).expect("mkdir mntcont");
         }
 
+        domount(None, Some(container_root), Some("tmpfs"), 0);
+        domount(Some("none"), Some("/"), None, MS_REC|MS_PRIVATE);
+        let proc_dir = container_root.join("proc");
+        println!("setting up {:?}", proc_dir.as_os_str());
+        fs::create_dir(proc_dir.as_path()).expect("mkdir proc");
+        domount(None, Some(proc_dir.as_path()), Some("proc"), MS_NOSUID|MS_NODEV|MS_NOEXEC);
+
+        // TODO populate root?
+
+        //TODO pivot root
+
+        {
+            println!("mountinfo");
+            let mut fstatus = File::open("/proc/self/mountinfo").expect("open mountinfo");
+            let mut contents = String::new();
+            fstatus.read_to_string(&mut contents).expect("read status");
+            for l in contents.lines(){
+                println!("{}", l);
+            }
+        }
         panic!("Oops!");
     });
 
