@@ -3,7 +3,7 @@ extern crate contain;
 
 use libc::{c_void, c_int, c_ulong, c_char};
 use std::ptr;
-use libc::{MS_REC, MS_PRIVATE, MS_NOSUID, MS_NODEV, MS_NOEXEC};
+use libc::{MS_REC, MS_PRIVATE, MS_NOSUID, MS_NODEV, MS_NOEXEC, MNT_DETACH};
 use libc::{CLONE_NEWUSER, CLONE_NEWNS, CLONE_NEWPID, SIGCHLD};
 use std::fs;
 use std::fs::{File, OpenOptions};
@@ -12,16 +12,46 @@ use std::io::{Read, Write};
 use std::thread;
 use std::ffi::{CString, CStr};
 use std::os::unix::ffi::OsStrExt;
+use std::process::Command;
 use contain::Stack;
 
 
+fn has_busybox() -> Option<String> {
+    let o = Command::new("which")
+            .arg("busybox")
+            .output().expect("failed to start `which' program");
+    if o.stderr.len() != 0 {
+        println!("{}", String::from_utf8_lossy(&o.stderr));
+    }
+    if !o.status.success() {
+        return None
+    }
+    //strip newline
+    let path = {
+        let p = String::from_utf8(o.stdout).unwrap();
+        let mut l = p.lines();
+        let path = String::from(l.next().unwrap());
+        assert_eq!(l.next(), None);
+        path
+    };
+
+    //check that is statically linked
+    let dynamic_cmd = format!("test -z \"$(objdump -p {} | grep NEEDED)\"", path);
+    println!("{}", dynamic_cmd);
+    let o = Command::new("sh").arg("-c").arg(dynamic_cmd).status().expect("failed to check whether busybox is static linked");
+    if !o.success() {
+        println!("busybox found at {} but it does not seem to be a static executable", path);
+        None
+    } else {
+        Some(path)
+    }
+
+}
+
+
 //path to cstr
-fn p2cstr<P: AsRef<Path>>(po: Option<P>) -> Option<CString> {
-    po.map( |p|
-        //http://stackoverflow.com/questions/38948669/whats-the-most-direct-way-to-convert-a-path-to-a-c-char
-        // TODO possible without copying?
-        CString::new(p.as_ref().as_os_str().as_bytes()).expect("string contains NULLs")
-    )
+fn p2cstr<P: AsRef<Path>>(p: P) -> CString {
+    CString::new(p.as_ref().as_os_str().as_bytes()).expect("string contains NULLs")
 }
 
 // CString Option to pointer
@@ -29,9 +59,23 @@ fn cstr2p(o: Option<CString>) -> *const c_char {
     o.map_or(ptr::null(), |x| x.as_ptr())
 }
 
+
+mod ffi{
+    use libc::{c_int, c_char};
+    extern {
+        pub fn pivot_root(new_root: *const c_char, put_old: *const c_char) -> c_int;
+    }
+}
+fn pivot_root<P: AsRef<Path>>(new_root: P, put_old: P) {
+    let new_root = p2cstr(new_root).as_ptr();
+    let put_old = p2cstr(put_old).as_ptr();
+    let r = unsafe { ffi::pivot_root(new_root, put_old) };
+    assert_eq!(r, 0);
+}
+
 fn domount<P: AsRef<Path>>(source: Option<P>, target: Option<P>, filesystemtype: Option<&str>, mountflags: c_ulong) -> () {
-    let source = p2cstr(source.as_ref());
-    let target = p2cstr(target.as_ref());
+    let source = source.map(p2cstr);
+    let target = target.map(p2cstr);
     let fstype = match filesystemtype {
             None => ptr::null(),
             Some(fst) => CString::new(fst).expect("fstypes has NULLs").as_ptr(),
@@ -79,16 +123,34 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
             fs::create_dir(container_root).expect("mkdir mntcont");
         }
 
+        println!("mounting container root");
         domount(None, Some(container_root), Some("tmpfs"), 0);
         domount(Some("none"), Some("/"), None, MS_REC|MS_PRIVATE);
-        let proc_dir = container_root.join("proc");
-        println!("setting up {:?}", proc_dir.as_os_str());
-        fs::create_dir(proc_dir.as_path()).expect("mkdir proc");
-        domount(None, Some(proc_dir.as_path()), Some("proc"), MS_NOSUID|MS_NODEV|MS_NOEXEC);
+        {
+            let proc_dir = container_root.join("proc");
+            println!("setting up {:?}", proc_dir.as_os_str());
+            fs::create_dir(proc_dir.as_path()).expect("mkdir proc");
+            domount(None, Some(proc_dir.as_path()), Some("proc"), MS_NOSUID|MS_NODEV|MS_NOEXEC);
+        }
 
-        // TODO populate root?
+        // TODO populate root. copy busybox to it
+        match has_busybox() {
+            None => println!("not populating root (no busybox found)"),
+            Some(busyboxpath) => println!("populating root"),
+        }
 
-        //TODO pivot root
+        let old_root_name = "oldroot";
+        {
+            println!("Entering new root");
+            let old_root = container_root.join(old_root_name);
+            fs::create_dir(old_root.as_path()).expect("mkdir oldroot");
+            pivot_root(container_root, old_root.as_path());
+        }
+        // we moved to the new root
+        let container_root = Path::new("/");
+        let old_root = container_root.join(old_root_name);
+
+        assert_eq!( unsafe { libc::umount2(p2cstr(old_root).as_ptr(), MNT_DETACH) }, 0);
 
         {
             println!("mountinfo");
@@ -99,7 +161,7 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
                 println!("{}", l);
             }
         }
-        panic!("Oops!");
+        0
     });
 
     match h.join() {
