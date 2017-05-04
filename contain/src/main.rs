@@ -149,11 +149,21 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
             fs::create_dir(old_root.as_path()).expect("mkdir oldroot");
             pivot_root(container_root, old_root.as_path());
         }
+
+        unsafe { let root = CString::new("/").unwrap();
+            assert_eq!(libc::chdir(root.as_ptr()), 0);
+        };
+
         // we moved to the new root
         let container_root = Path::new("/");
         let old_root = container_root.join(old_root_name);
 
-        assert_eq!( unsafe { libc::umount2(p2cstr(old_root).as_ptr(), MNT_DETACH) }, 0);
+        {
+            println!("getting rid of old root");
+            assert_eq!( unsafe { libc::umount2(p2cstr(old_root.as_path()).as_ptr(), MNT_DETACH) }, 0);
+            assert!(fs::read_dir(old_root.as_path()).expect("oldroot dir").next().is_none());
+            fs::remove_dir(old_root.as_path()).expect("rmdir oldroot");
+        }
 
         {
             println!("mountinfo");
