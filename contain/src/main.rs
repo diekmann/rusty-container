@@ -136,7 +136,10 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
         // TODO populate root. copy busybox to it
         match has_busybox() {
             None => println!("not populating root (no busybox found)"),
-            Some(busyboxpath) => println!("populating root"),
+            Some(busyboxpath) => {
+                println!("populating root with a busybox image.");
+                assert!(fs::copy(busyboxpath, container_root.join("busybox")).expect("copy busybox") > 0);
+            }
         }
 
         let old_root_name = "oldroot";
@@ -165,7 +168,14 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
     });
 
     match h.join() {
-        Ok(_) => 0,
+        Ok(_) => {
+            let prog = CString::new("/busybox").unwrap();
+            let arg0 = CString::new("busybox").unwrap();
+            let arg1 = CString::new("sh").unwrap();
+            let argv = vec![arg0.as_ptr(), arg1.as_ptr(), ptr::null()];
+            unsafe { libc::execv(prog.as_ptr(), argv.as_ptr()) };
+            panic!("exec failed!"); //stack unwinding will also panic :D
+        }
         Err(_) => 1,
     }
 }
