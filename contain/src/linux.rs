@@ -1,6 +1,6 @@
 extern crate libc;
 
-use libc::{c_void, c_int, c_ulong, c_char};
+use libc::{c_int, c_ulong, c_char};
 use std::ptr;
 use std::path::Path;
 use std::ffi::{CString};

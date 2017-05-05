@@ -4,4 +4,4 @@ mod runcontained;
 pub use runcontained::runcontained;
 
 mod stack;
-mod linux;
+pub mod linux;

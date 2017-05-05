@@ -8,48 +8,19 @@ use std::fs::{File, OpenOptions};
 use std::path::Path;
 use std::io::{Read, Write};
 use std::thread;
-use std::process::Command;
-use linux::{chdir, mount, umount2, pivot_root, execv};
+use linux::{chdir, mount, umount2, pivot_root};
 use stack::Stack;
 
-fn has_busybox() -> Option<String> {
-    let o = Command::new("which")
-            .arg("busybox")
-            .output().expect("failed to start `which' program");
-    if o.stderr.len() != 0 {
-        println!("{}", String::from_utf8_lossy(&o.stderr));
-    }
-    if !o.status.success() {
-        return None
-    }
-    //strip newline
-    let path = {
-        let p = String::from_utf8(o.stdout).unwrap();
-        let mut l = p.lines();
-        let path = String::from(l.next().unwrap());
-        assert_eq!(l.next(), None);
-        path
-    };
-
-    //check that is statically linked
-    let dynamic_cmd = format!("test -z \"$(objdump -p {} | grep NEEDED)\"", path);
-    println!("{}", dynamic_cmd);
-    let o = Command::new("sh").arg("-c").arg(dynamic_cmd).status().expect("failed to check whether busybox is static linked");
-    if !o.success() {
-        println!("busybox found at {} but it does not seem to be a static executable", path);
-        None
-    } else {
-        Some(path)
-    }
-}
 
 // a lot copied from man USER_NAMESPACES(7)
 extern "C" fn child_func(args: *mut c_void) -> c_int {
     println!("I'm called from child_func");
 
-    let args = args as *mut ChildArgs;
+    let args = args as *mut ChildArgs<bool>;
     let r_pipe_fd = unsafe { (*args).r_pipe_fd };
     let w_pipe_fd = unsafe { (*args).w_pipe_fd };
+    let setup = unsafe { (*args).setup };
+    let run = unsafe { (*args).run };
     println!("r_pipe_fd: {}", r_pipe_fd);
 
     // run everything in a new thread so exceptions bubble up to rust
@@ -92,18 +63,8 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
             mount(None, Some(proc_dir.as_path()), Some("proc"), MS_NOSUID|MS_NODEV|MS_NOEXEC);
         }
 
-        // populate root. copy busybox to it
-        let busybox = match has_busybox() {
-            None => {
-                println!("not populating root (no busybox found)");
-                false
-            }
-            Some(p) => {
-                println!("populating root with a busybox image.");
-                assert!(fs::copy(&p, container_root.join("busybox")).expect("copy busybox") > 0);
-                true
-            }
-        };
+        // setup: a chance to populate root.
+        let setup_result = setup(container_root);
 
         let old_root_name = "oldroot";
         {
@@ -136,27 +97,20 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
                 println!("{}", l);
             }
         }
-        busybox
+        setup_result
     });
 
     match h.join() {
-        Ok(busybox) => {
-            if busybox {
-                execv("/busybox", vec!["busybox", "sh"]);
-                unreachable!()
-            } else {
-                println!("yolo");
-                0
-            }
-        }
+        Ok(setup_result) => run(setup_result),
         Err(_) => 1,
     }
 }
 
-struct ChildArgs {
+struct ChildArgs<T> {
     r_pipe_fd: c_int,
     w_pipe_fd: c_int,
-    //setup: Fn(T) -> Q,
+    setup: fn(&Path) -> T, //container_root -> custom_val
+    run: fn(T) -> c_int,
 }
 
 //write to file with one write call
@@ -167,12 +121,15 @@ fn write(path: &String, content: &[u8]) {
     assert_eq!(file.write(content).expect("write"), content.len());
 }
 
-pub fn runcontained() {
+
+
+pub fn runcontained(setup: fn(&Path) -> bool, run: fn(bool) -> c_int) {
+
     let mut pipe_fd = vec![0;2];  /* Pipe used to synchronize parent and child */
     assert_eq!(unsafe { libc::pipe(pipe_fd.as_mut_ptr()) }, 0);
     println!("r pipe: {} w pipe: {}", pipe_fd[0], pipe_fd[1]);
     let ptr_child_args = {
-        let child_args = Box::new(ChildArgs { r_pipe_fd: pipe_fd[0], w_pipe_fd: pipe_fd[1]});
+        let child_args = Box::new(ChildArgs { r_pipe_fd: pipe_fd[0], w_pipe_fd: pipe_fd[1], setup: setup, run: run});
         Box::into_raw(child_args) as *mut c_void
     };
 
