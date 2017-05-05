@@ -3,7 +3,7 @@ extern crate libc;
 use libc::{c_void, c_int, c_ulong, c_char};
 use std::ptr;
 use std::path::Path;
-use std::ffi::{CString, CStr};
+use std::ffi::{CString};
 use std::os::unix::ffi::OsStrExt;
 
 
@@ -17,6 +17,11 @@ fn cstr2p(o: Option<CString>) -> *const c_char {
     o.map_or(ptr::null(), |x| x.as_ptr())
 }
 
+
+pub fn chdir<P: AsRef<Path>>(path: P) {
+    let path = CString::new(p2cstr(path)).unwrap();
+    assert_eq!(unsafe { libc::chdir(path.as_ptr()) }, 0);
+}
 
 mod ffi{
     use libc::{c_int, c_char};

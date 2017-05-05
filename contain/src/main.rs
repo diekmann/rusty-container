@@ -2,7 +2,6 @@ extern crate libc;
 extern crate contain;
 
 use libc::{c_void, c_int};
-use std::ptr;
 use libc::{MS_REC, MS_PRIVATE, MS_NOSUID, MS_NODEV, MS_NOEXEC, MNT_DETACH};
 use libc::{CLONE_NEWUSER, CLONE_NEWNS, CLONE_NEWPID, SIGCHLD};
 use std::fs;
@@ -10,9 +9,8 @@ use std::fs::{File, OpenOptions};
 use std::path::Path;
 use std::io::{Read, Write};
 use std::thread;
-use std::ffi::{CString};
 use std::process::Command;
-use contain::linux::{mount, umount2, pivot_root, execv};
+use contain::linux::{chdir, mount, umount2, pivot_root, execv};
 use contain::Stack;
 
 
@@ -120,9 +118,7 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
             pivot_root(container_root, old_root.as_path());
         }
 
-        unsafe { let root = CString::new("/").unwrap();
-            assert_eq!(libc::chdir(root.as_ptr()), 0);
-        };
+        chdir("/");
 
         // we moved to the new root
         let container_root = Path::new("/");
