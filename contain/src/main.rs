@@ -12,7 +12,7 @@ use std::io::{Read, Write};
 use std::thread;
 use std::ffi::{CString};
 use std::process::Command;
-use contain::linux::{mount, umount2, pivot_root};
+use contain::linux::{mount, umount2, pivot_root, execv};
 use contain::Stack;
 
 
@@ -100,13 +100,17 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
         }
 
         // populate root. copy busybox to it
-        match has_busybox() {
-            None => println!("not populating root (no busybox found)"),
-            Some(busyboxpath) => {
-                println!("populating root with a busybox image.");
-                assert!(fs::copy(busyboxpath, container_root.join("busybox")).expect("copy busybox") > 0);
+        let busybox = match has_busybox() {
+            None => {
+                println!("not populating root (no busybox found)");
+                false
             }
-        }
+            Some(p) => {
+                println!("populating root with a busybox image.");
+                assert!(fs::copy(&p, container_root.join("busybox")).expect("copy busybox") > 0);
+                true
+            }
+        };
 
         let old_root_name = "oldroot";
         {
@@ -141,18 +145,18 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
                 println!("{}", l);
             }
         }
-        0
+        busybox
     });
 
     match h.join() {
-        Ok(_) => {
-            //TODO fails if we don't have busybox
-            let prog = CString::new("/busybox").unwrap();
-            let arg0 = CString::new("busybox").unwrap();
-            let arg1 = CString::new("sh").unwrap();
-            let argv = vec![arg0.as_ptr(), arg1.as_ptr(), ptr::null()];
-            unsafe { libc::execv(prog.as_ptr(), argv.as_ptr()) };
-            panic!("exec failed!"); //stack unwinding will also panic :D
+        Ok(busybox) => {
+            if busybox {
+                execv("/busybox", vec!["busybox", "sh"]);
+                unreachable!()
+            } else {
+                println!("yolo");
+                0
+            }
         }
         Err(_) => 1,
     }

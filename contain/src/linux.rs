@@ -46,3 +46,19 @@ pub fn umount2<P: AsRef<Path>>(target: P, flags: c_int) {
     let target = p2cstr(target);
     assert_eq!( unsafe { libc::umount2(target.as_ptr(), flags) }, 0);
 }
+
+pub fn execv(path: &str, argv: Vec<&str>){
+    let prog = CString::new(path).unwrap();
+    //have a copy in mem we can point to. No map!
+    let mut argv_strs = Vec::with_capacity(argv.len());
+    for s in argv {
+        argv_strs.push(CString::new(s).unwrap());
+    }
+    let mut argv_ptrs = Vec::with_capacity(argv_strs.len() + 1);
+    for s in argv_strs {
+        argv_ptrs.push(s.as_ptr());
+    }
+    argv_ptrs.push(ptr::null());
+    unsafe { libc::execv(prog.as_ptr(), argv_ptrs.as_ptr()) };
+    panic!("exec failed!");
+}
