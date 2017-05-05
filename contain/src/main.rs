@@ -99,7 +99,7 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
             mount(None, Some(proc_dir.as_path()), Some("proc"), MS_NOSUID|MS_NODEV|MS_NOEXEC);
         }
 
-        // TODO populate root. copy busybox to it
+        // populate root. copy busybox to it
         match has_busybox() {
             None => println!("not populating root (no busybox found)"),
             Some(busyboxpath) => {
@@ -146,6 +146,7 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
 
     match h.join() {
         Ok(_) => {
+            //TODO fails if we don't have busybox
             let prog = CString::new("/busybox").unwrap();
             let arg0 = CString::new("busybox").unwrap();
             let arg1 = CString::new("sh").unwrap();
