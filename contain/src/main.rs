@@ -1,7 +1,7 @@
 extern crate libc;
 extern crate contain;
 
-use libc::{c_void, c_int, c_ulong, c_char};
+use libc::{c_void, c_int};
 use std::ptr;
 use libc::{MS_REC, MS_PRIVATE, MS_NOSUID, MS_NODEV, MS_NOEXEC, MNT_DETACH};
 use libc::{CLONE_NEWUSER, CLONE_NEWNS, CLONE_NEWPID, SIGCHLD};
@@ -10,9 +10,9 @@ use std::fs::{File, OpenOptions};
 use std::path::Path;
 use std::io::{Read, Write};
 use std::thread;
-use std::ffi::{CString, CStr};
-use std::os::unix::ffi::OsStrExt;
+use std::ffi::{CString};
 use std::process::Command;
+use contain::linux::{mount, umount2, pivot_root};
 use contain::Stack;
 
 
@@ -49,40 +49,6 @@ fn has_busybox() -> Option<String> {
 }
 
 
-//path to cstr
-fn p2cstr<P: AsRef<Path>>(p: P) -> CString {
-    CString::new(p.as_ref().as_os_str().as_bytes()).expect("string contains NULLs")
-}
-
-// CString Option to pointer
-fn cstr2p(o: Option<CString>) -> *const c_char {
-    o.map_or(ptr::null(), |x| x.as_ptr())
-}
-
-
-mod ffi{
-    use libc::{c_int, c_char};
-    extern {
-        pub fn pivot_root(new_root: *const c_char, put_old: *const c_char) -> c_int;
-    }
-}
-fn pivot_root<P: AsRef<Path>>(new_root: P, put_old: P) {
-    let new_root = p2cstr(new_root).as_ptr();
-    let put_old = p2cstr(put_old).as_ptr();
-    let r = unsafe { ffi::pivot_root(new_root, put_old) };
-    assert_eq!(r, 0);
-}
-
-fn domount<P: AsRef<Path>>(source: Option<P>, target: Option<P>, filesystemtype: Option<&str>, mountflags: c_ulong) -> () {
-    let source = source.map(p2cstr);
-    let target = target.map(p2cstr);
-    let fstype = match filesystemtype {
-            None => ptr::null(),
-            Some(fst) => CString::new(fst).expect("fstypes has NULLs").as_ptr(),
-        };
-    let r = unsafe { libc::mount(cstr2p(source), cstr2p(target), fstype, mountflags, ptr::null()) };
-    assert_eq!(r, 0);
-}
 
 // a lot copied from man USER_NAMESPACES(7)
 extern "C" fn child_func(args: *mut c_void) -> c_int {
@@ -124,13 +90,13 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
         }
 
         println!("mounting container root");
-        domount(None, Some(container_root), Some("tmpfs"), 0);
-        domount(Some("none"), Some("/"), None, MS_REC|MS_PRIVATE);
+        mount(None, Some(container_root), Some("tmpfs"), 0);
+        mount(Some("none"), Some("/"), None, MS_REC|MS_PRIVATE);
         {
             let proc_dir = container_root.join("proc");
             println!("setting up {:?}", proc_dir.as_os_str());
             fs::create_dir(proc_dir.as_path()).expect("mkdir proc");
-            domount(None, Some(proc_dir.as_path()), Some("proc"), MS_NOSUID|MS_NODEV|MS_NOEXEC);
+            mount(None, Some(proc_dir.as_path()), Some("proc"), MS_NOSUID|MS_NODEV|MS_NOEXEC);
         }
 
         // TODO populate root. copy busybox to it
@@ -157,12 +123,13 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
         // we moved to the new root
         let container_root = Path::new("/");
         let old_root = container_root.join(old_root_name);
+        let old_root = old_root.as_path();
 
         {
             println!("getting rid of old root");
-            assert_eq!( unsafe { libc::umount2(p2cstr(old_root.as_path()).as_ptr(), MNT_DETACH) }, 0);
-            assert!(fs::read_dir(old_root.as_path()).expect("oldroot dir").next().is_none());
-            fs::remove_dir(old_root.as_path()).expect("rmdir oldroot");
+            umount2(old_root, MNT_DETACH);
+            assert!(fs::read_dir(old_root).expect("oldroot dir").next().is_none());
+            fs::remove_dir(old_root).expect("rmdir oldroot");
         }
 
         {
@@ -195,13 +162,14 @@ struct ChildArgs {
     w_pipe_fd: c_int,
 }
 
+//write to file with one write call
 fn write(path: &String, content: &[u8]) {
     println!("Writing to {}", path);
     let mut file = OpenOptions::new().read(false).write(true).create(false).open(path).expect("open");
     // needs to happen in one write call
     assert_eq!(file.write(content).expect("write"), content.len());
-    //file gets dropped
 }
+
 fn main() {
     println!("Hello, world!");
 
