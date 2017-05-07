@@ -7,12 +7,15 @@ use std::fs;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 use std::io::{Read, Write};
-use std::thread;
+use std::panic::catch_unwind;
 use linux::{chdir, mount, umount2, pivot_root};
 use stack::Stack;
 
 
 // a lot copied from man USER_NAMESPACES(7)
+
+
+#[no_mangle]
 extern "C" fn child_func(args: *mut c_void) -> c_int {
     println!("I'm called from child_func");
 
@@ -24,7 +27,7 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
     println!("r_pipe_fd: {}", r_pipe_fd);
 
     // run everything in a new thread so exceptions bubble up to rust
-    let h = thread::spawn(move || {
+    let result = catch_unwind(move || {
         // wait for parent
         println!("waiting for parent to set up mapping, ...");
         assert_eq!(unsafe { libc::close(w_pipe_fd) } , 0);
@@ -109,9 +112,12 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
         setup_result
     });
 
-    match h.join() {
+    match result {
         Ok(setup_result) => run(setup_result),
-        Err(_) => 1,
+        Err(_) => {
+            println!("setup paniced");
+            1
+        }
     }
 }
 
