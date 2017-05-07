@@ -65,12 +65,12 @@ pub fn execv(path: &str, argv: Vec<&str>){
     for s in argv {
         argv_strs.push(CString::new(s).unwrap());
     }
-    println!("execv {:?} {:?}", prog, argv_strs);
     let mut argv_ptrs = Vec::with_capacity(argv_strs.len() + 1);
-    for s in argv_strs {
+    for s in &argv_strs {
         argv_ptrs.push(s.as_ptr());
     }
     argv_ptrs.push(ptr::null());
+    println!("execv {:?} {:?}", prog, argv_strs);
     unsafe { libc::execv(prog.as_ptr(), argv_ptrs.as_ptr()) };
     panic!("exec failed!");
 }
