@@ -7,10 +7,16 @@ use std::fs;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 use std::io::{Read, Write};
-use std::panic::catch_unwind;
 use linux::{chdir, mount, umount2, pivot_root};
 use stack::Stack;
 
+//use std::panic::catch_unwind;
+fn catch_unwind<F: FnOnce() -> R, R>(f: F) -> Result<R, ()> {
+    println!("my ubuntu rust is too old. Just make sure nothing panics, mkey?");
+    //rust does not support conditional compilation based on the compiler version -_-
+   Ok(f())
+   //panics on Error
+}
 
 // a lot copied from man USER_NAMESPACES(7)
 
