@@ -8,22 +8,42 @@ use contain::linux;
 use contain::runcontained;
 
 fn has_busybox() -> Option<String> {
-    let o = Command::new("which")
-            .arg("busybox")
-            .output().expect("failed to start `which' program");
-    if o.stderr.len() != 0 {
-        println!("{}", String::from_utf8_lossy(&o.stderr));
-    }
-    if !o.status.success() {
-        return None
-    }
-    //strip newline
+    let busybox = "busybox";
+
+    let islocal = match fs::metadata(busybox) {
+        Err(_) => None,
+        Ok(metadata) => {
+            println!("found {} in local directory (preferred)", busybox);
+            if metadata.file_type().is_file() { //TODO check executable!
+                Some(String::from(busybox))
+            } else {
+                println!("something is strange with your local {}, ...", busybox);
+                None
+            }
+        }
+    };
+
     let path = {
-        let p = String::from_utf8(o.stdout).unwrap();
-        let mut l = p.lines();
-        let path = String::from(l.next().unwrap());
-        assert_eq!(l.next(), None);
-        path
+        if islocal.is_some() {
+            islocal.unwrap()
+        } else {
+            // look for global install
+            let o = Command::new("which")
+                    .arg(busybox)
+                    .output().expect("failed to start `which' program");
+            if o.stderr.len() != 0 {
+                println!("{}", String::from_utf8_lossy(&o.stderr));
+            }
+            if !o.status.success() {
+                return None
+            }
+            //strip newline
+            let p = String::from_utf8(o.stdout).unwrap();
+            let mut l = p.lines();
+            let path = String::from(l.next().unwrap());
+            assert_eq!(l.next(), None);
+            path
+        }
     };
 
     //check that is statically linked
@@ -31,7 +51,7 @@ fn has_busybox() -> Option<String> {
     println!("{}", dynamic_cmd);
     let o = Command::new("sh").arg("-c").arg(dynamic_cmd).status().expect("failed to check whether busybox is static linked");
     if !o.success() {
-        println!("busybox found at {} but it does not seem to be a static executable", path);
+        println!("{} found at {} but it does not seem to be a static executable", busybox, path);
         None
     } else {
         Some(path)
