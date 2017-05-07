@@ -97,6 +97,15 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
                 println!("{}", l);
             }
         }
+
+        // Bare setup is done.
+        // Missing:
+        //  * Resource limitations with cgroups
+        //  * Capability setup (process has full capabilities in its user namespace!)
+        //  * Container is naked:
+        //    * Full kernel attack surface, no syscall limitations with seccomp
+        //    * No critical things prohibited with AppArmor or SELinux (e.g. container has full
+        //      /proc access)
         setup_result
     });
 
