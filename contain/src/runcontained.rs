@@ -8,6 +8,7 @@ use std::fs::{File, OpenOptions};
 use std::path::Path;
 use std::io::{Read, Write};
 use linux::{chdir, mount, umount2, pivot_root};
+use linux;
 use stack::Stack;
 
 //use std::panic::catch_unwind;
@@ -40,6 +41,7 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
         unsafe {
             let mut buf = 0u8;
             assert_eq!(libc::read(r_pipe_fd, (&mut buf) as *mut u8 as *mut c_void, 1), 0);
+            assert_eq!(libc::close(r_pipe_fd), 0);
         }
 
         {
@@ -106,6 +108,8 @@ extern "C" fn child_func(args: *mut c_void) -> c_int {
                 println!("{}", l);
             }
         }
+
+        linux::debug_leaked_fds(0);
 
         // Bare setup is done.
         // Missing:

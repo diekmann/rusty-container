@@ -4,6 +4,7 @@ use libc::{c_int, c_ulong, c_char};
 use std::ptr;
 use std::path::Path;
 use std::ffi::{CString};
+use std::mem;
 use std::os::unix::ffi::OsStrExt;
 
 
@@ -73,4 +74,27 @@ pub fn execv(path: &str, argv: Vec<&str>){
     println!("execv {:?} {:?}", prog, argv_strs);
     unsafe { libc::execv(prog.as_ptr(), argv_ptrs.as_ptr()) };
     panic!("exec failed!");
+}
+
+pub fn debug_leaked_fds(start: c_int) {
+    let numfds = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) };
+    assert!(numfds >= 1024); //something is strange otherwisse
+    assert!(numfds <= 65536); //arbitrarily chosen by me to make sure we can convert to smaller int types
+
+    let numfds = numfds as c_int;
+
+    let mut buf: libc::stat = unsafe { mem::zeroed() };
+    for fd in start..numfds {
+        let (ret, errno) = unsafe { 
+            let ret = libc::fstat(fd, &mut buf);
+            let errno = *libc::__errno_location();
+            (ret, errno)
+        };
+        if ret == 0 {
+            println!("leaked fd number {}", fd);
+        } else {
+            assert_eq!(ret, -1);
+            assert_eq!(errno, libc::EBADF);
+        }
+    }
 }
