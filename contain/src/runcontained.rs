@@ -2,7 +2,7 @@ extern crate libc;
 
 use libc::{c_void, c_int};
 use libc::{MS_REC, MS_PRIVATE, MS_NOSUID, MS_NODEV, MS_NOEXEC, MNT_DETACH};
-use libc::{CLONE_NEWUSER, CLONE_NEWNS, CLONE_NEWPID, SIGCHLD};
+use libc::{CLONE_NEWUSER, CLONE_NEWNS, CLONE_NEWPID, CLONE_NEWNET, SIGCHLD};
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
@@ -163,7 +163,7 @@ pub fn runcontained(setup: fn(&Path) -> bool, run: fn(bool) -> c_int) {
 
     println!("cloning");
     let child_pid = unsafe {
-        libc::clone(child_func, child_stack.top, CLONE_NEWUSER|CLONE_NEWNS|CLONE_NEWPID|SIGCHLD, ptr_child_args)
+        libc::clone(child_func, child_stack.top, CLONE_NEWUSER|CLONE_NEWNS|CLONE_NEWPID|CLONE_NEWNET|SIGCHLD, ptr_child_args)
     };
     assert!(child_pid != -1);
 
